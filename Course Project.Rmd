@@ -1,0 +1,607 @@
+---
+title: "Neural Activity in Mice"
+author: "Damon Kwan"
+date: "2024-02-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(ggplot2)
+library(tidyverse)
+library(knitr)
+library(ROCR)
+
+```
+
+## Neural Activity in Mice
+
+***
+
+## Abstract
+
+In this project, I will build a predictive model. I will analyze the neural activity of multiple mice across different sessions and trials. I will analyze how the spikes and the stimuli of the neural activity affect the type of feedback. Across the different sessions and trials, I will find patterns using regression analysis. I would apply these patterns to new data to predict new feedback type. 
+
+## Section 1 Introduction
+
+I will use a subset of data collected by Steinmetz et al. (2019) to build a predictive model that investigates the how spikes and stimuli affect the feedback type. In this study, Neuropixel probes were used to record from around 30000 neurons in 42 brain regions where mice performed a visual task. In my subset, 10 mice were experimented on across 18 different sessions, with hundreds of trial each session. The visual task in this particular subset involved showing a mouse visual stimuli on two screens on the left and the right side. The visual stimuli had contrast levels {0, .25, .5, 1} (0 being no stimulus). In response to the stimuli, the mice were suppose to interact with the wheel. Based on their interaction, a reward was given. The neural activity were shown using spikes and have timestamps of neuron firing. I am looking on the spike trains of neurons 0.4 seconds post-onset. 
+
+
+## Section 2 Exploratory analysis
+```{r, cache=TRUE}
+#session_list <- vector("numeric", length = 18)
+#names_list <- vector("character", length = 18)
+#neuron_number_list <- vector("numeric", length = 18)
+#trial_number_list <- vector("numeric", length = 18)
+#feedback_success_rate_list <- vector("character", length = 18)
+#left_contrast_list <- vector("numeric", length = 18)
+#right_contrast_list <- vector("numeric", length = 18)
+#feedback_type_list <- vector("character", length = 18)
+
+session <- list()
+#for (i in 1:18) {
+  #session[[i]] <- readRDS(paste('./Data/session', i, '.rds', sep=''))
+  #session_list[i] <- i
+  #names_list[i] <- session[[i]]$mouse_name
+  #neuron_number_list[i] <- dim(session[[i]]$spks[[1]])[1]
+  #trial_number_list[i] <- length(session[[i]]$spks)
+  #feedback_success_rate_list[i] <- (sum(session[[i]]$feedback_type == #1))/(length(session[[i]]$feedback_type))
+  #left_contrast_list[i] <- session[[i]]$contrast_left
+  #right_contrast_list[i] <- session[[i]]$contrast_right
+  #brain_area_list[i] <- session[[i]]$brain_area
+  #feedback_type_list[i] <- session[[i]]$feedback_type
+#}
+
+#data_table <- data.frame(
+ # Session_number = session_list,
+  #Name = names_list, 
+  #Neuron_number = neuron_number_list,
+  #Trial_number = trial_number_list,
+  #Success_Rate = feedback_success_rate_list
+  #Left_Contrast = left_contrast_list,
+  #Right_Contrast = right_contrast_list, 
+  #Feedback_Type = feedback_type_list
+#)
+
+#print(data_table)
+
+data_table <- tibble(
+  Session_number = rep(0, 18),
+  Name = rep("Name", 18), 
+  Neuron_number = rep(0, 18),
+  Trial_number = rep(0, 18),
+  Brain_area = rep(0,18),
+  Success_Rate = rep(0, 18)
+)
+session <- list()
+for (i in 1:18) {
+  session[[i]] <- readRDS(paste('./Data/session', i, '.rds', sep=''))
+  data_table[i,1] <- i
+  data_table[i,2] <- session[[i]]$mouse_name
+  data_table[i,3] <- dim(session[[i]]$spks[[1]])[1]
+  data_table[i,4] <- length(session[[i]]$spks)
+  data_table[i,5] <- length(unique(session[[i]]$brain_area))
+  data_table[i,6] <- (sum(session[[i]]$feedback_type == 
+                            1))/(length(session[[i]]$feedback_type))
+}
+colnames(data_table) <- c("Session Number", "Mouse Name", "Neuron Number", "Trial Number", 
+                          "Brain Area", "Success Rate")
+kable(data_table, format = "html", table.attr = "class='table table-striped'",digits=2) 
+minSuccess <- min(data_table$`Success Rate`)
+maxSuccess <- max(data_table$`Success Rate`)
+```
+
+We can see that across all 18 sessions, the success rate for each session is between `r minSuccess` and `r maxSuccess`. This range is quite big, so let's check if there are any explanations for this range in success rate. 
+
+
+First, Let's see if there is any correlation in the name of the mouse and the success rate.
+```{r cache=TRUE}
+ggplot(data_table, aes(x = `Mouse Name`, y = `Success Rate`)) +
+  geom_point() +
+  labs(title = "Average Success Rate by Mouse",
+       x = "Name",
+       y = "Average Success Rate")
+```
+
+From the graph, we can see that the mouse named Cori has a significantly lower success rate than the mouse named Lederberg. The other mice seem to have a spread out success rate. The reason for the change in success rate may be because of the intelligence of certain mice. The mouse named Lederberg could be smarter than the mouse named Cori, so we see a higher success rate in Lederberg.
+
+Let's now see if the number of neurons activated has any influence on success rate.
+```{r cache=TRUE}
+ggplot(data_table, aes(x = `Neuron Number`, y = `Success Rate`)) +
+  geom_point() +
+  labs(title = "Average Success Rate by Neuron Activation",
+       x = "Neuron Activation",
+       y = "Average Success Rate") +
+  coord_cartesian(xlim = c(600, 1800))
+
+```
+
+There is no clear pattern with neuron activation and success rate, so the number of neurons activated does not have a clear impact on success rate.
+
+Let's check if the number of trials has any influence.
+```{r cache=TRUE}
+ggplot(data_table, aes(x = `Trial Number`, y = `Success Rate`)) +
+  geom_point() +
+  labs(title = "Average Success Rate by Trial Number",
+       x = "Trial Number",
+       y = "Average Success Rate") +
+  coord_cartesian(xlim = c(100, 450))
+
+```
+
+Again, there is no clear pattern with trial number and success rate, so the number of trials  does not have a clear impact on success rate.
+
+
+We can also check if there's a relation with the number of brain area activated.
+
+```{r cache=TRUE}
+ggplot(data_table, aes(x = `Brain Area`, y = `Success Rate`)) +
+  geom_point() +
+  labs(title = "Average Success Rate by Brain Area",
+       x = "Brain Area",
+       y = "Average Success Rate") +
+  coord_cartesian(xlim = c(5,15))
+
+```
+
+Again, there is no clear pattern with brain area and success rate, so the number of trials  does not have a clear impact on success rate.
+
+
+Let's check whether or not the mice have some sort of biased to turning the wheel right, left, or doing nothing at all.
+
+```{r cache=TRUE}
+master_vector <- vector("list", length = 18)
+for (k in 1:18) {
+  contrast_list <- vector("character", length = length(session[[k]]$feedback_type))
+  for (i in 1:length(session[[k]]$contrast_left)){
+    if (session[[k]]$contrast_left[i] > session[[k]]$contrast_right[i]) {
+      contrast_list[i] <- ("Left")
+    } else if (session[[k]]$contrast_left[i] < session[[k]]$contrast_right[i])
+      {
+      contrast_list[i] <- ("Right")
+    } else if (session[[k]]$contrast_left[i] + session[[k]]$contrast_right[i] == 0){
+      contrast_list[i] <- ("zero")
+    }else if (session[[k]]$contrast_left[i] == session[[k]]$contrast_right[i]){
+      contrast_list[i] <- ("equal")
+    }else {
+      contrast_list[i] <- ("error")
+    }
+  }
+  master_vector[[k]] <- contrast_list
+}
+
+proportionTable <- tibble(
+  Session_number = rep(0, 18),
+  right = rep(0, 18),
+  left = rep(0,18),
+  nothing = rep(0, 18)
+)
+
+for (i in 1:18){
+  tmp <- table(master_vector[[i]],session[[i]]$feedback_type)
+  proportionTable[i,1] <- i
+  proportionTable[i,2] <- sum(tmp[3,])/sum(tmp[-1,])
+  proportionTable[i,3] <- sum(tmp[2,])/sum(tmp[-1,])
+  proportionTable[i,4] <- sum(tmp[4,])/sum(tmp[-1,])
+}
+newProTable <- kable(t(proportionTable), format = "html", table.attr = "class='table table-striped'",digits=2) 
+newProTable
+```
+
+The table above shows the proportion of correct right, left, and do nothing turns. To visualize this data more clearly, we have
+
+```{r cache=TRUE}
+proportionTable.1 <- tibble(
+  Session_number = rep(0, 18),
+  right = rep(0, 18),
+  left = rep(0,18),
+  nothing = rep(0, 18)
+)
+for (i in 1:18){
+  tmp <- table(master_vector[[i]],session[[i]]$feedback_type)
+  proportionTable.1[i,1] <- i
+  proportionTable.1[i,2] <- tmp[3,2]/sum(tmp[-1,-1])
+  proportionTable.1[i,3] <- tmp[2,2]/sum(tmp[-1,-1])
+  proportionTable.1[i,4] <- tmp[4,2]/sum(tmp[-1,-1])
+}
+barplot(as.matrix(proportionTable[,-1]), beside = TRUE, col = c("#FF0000",
+"#00FF00",
+"#0000FF",
+"#FFFF00",
+"#800080",
+"#00FFFF",
+"#FF00FF",
+"#FFA500",
+"#FFC0CB",
+"#008080",
+"#A52A2A",
+"#E6E6FA",
+"#808000",
+"#800000",
+"#000080",
+"#FF7F50",
+"#708090",
+"#40E0D0"),
+        main = "Right Vs Left Vs Nothing (Regardless of Correctness)",
+        xlab = "Session Number", ylab = "Proportions")
+#legend("topright", legend = colnames(c("Session 1", "Session 2", "Session 3")), fill = c("#FF0000",
+#"#00FF00",
+#"#0000FF",
+#"#FFFF00",
+#"#800080",
+#"#00FFFF",
+#"#FF00FF",
+#"#FFA500",
+#"#FFC0CB",
+#"#008080",
+#"#A52A2A",
+#"#E6E6FA",
+#"#808000",
+#"#800000",
+#"#000080",
+#"#FF7F50",
+#"#708090",
+#"#40E0D0"))
+
+barplot(as.matrix(proportionTable.1[,-1]), beside = TRUE, col = c("#FF0000",
+"#00FF00",
+"#0000FF",
+"#FFFF00",
+"#800080",
+"#00FFFF",
+"#FF00FF",
+"#FFA500",
+"#FFC0CB",
+"#008080",
+"#A52A2A",
+"#E6E6FA",
+"#808000",
+"#800000",
+"#000080",
+"#FF7F50",
+"#708090",
+"#40E0D0"),
+        main = "Right Vs Left Vs Nothing (Dealing only with correct turns)",
+        xlab = "Session Number", ylab = "Proportions")
+#legend("topright", legend = colnames(1:18), fill = c("#FF0000",
+#"#00FF00",
+#"#0000FF",
+#"#FFFF00",
+#"#800080",
+#"#00FFFF",
+#"#FF00FF",
+#"#FFA500",
+#"#FFC0CB",
+#"#008080",
+#"#A52A2A",
+#"#E6E6FA",
+#"#808000",
+#"#800000",
+#"#000080",
+#"#FF7F50",
+#"#708090",
+#"#40E0D0"))
+
+```
+
+
+In the above Graphs, it shows if each mouse has a preferred direction to look at. Each session is marked with their own color. In the first bar plot regardless of correctness, we can see that there are higher proportions on the right and left turns than the do nothing category. This means that on average, receiving stimuli caused the mouse to do an action, which means that stimulus does have some effect on whether the mouse performed the desired action. It appears that on average, the left category has higher spikes than the right category. This may be because of mice being left-handed, so they have a left biasness.
+
+We can see similar findings in my second graph. On average, doing nothing has a lower proportion than the right and left categories. Left has the highest average, indicating some sort of bias.
+
+
+Now let's look at the spike data:
+```{r cache=TRUE}
+i.s=1 # indicator for this session
+
+i.t=1
+
+n.trial=length(session[[i.s]]$feedback_type)
+n.area=length(unique(session[[i.s]]$brain_area ))
+trial.summary =matrix(nrow=n.trial,ncol= n.area+1+2+1)
+
+average_spike_area<-function(i.t,this_session){
+  spk.trial = this_session$spks[[i.t]]
+  area= this_session$brain_area
+  spk.count=apply(spk.trial,1,sum)
+  spk.average.tapply=tapply(spk.count, area, mean)
+  return(spk.average.tapply)
+}
+
+for(i.t in 1:n.trial){
+  trial.summary[i.t,]=c(average_spike_area(i.t,this_session = session[[i.s]]),
+                          session[[i.s]]$feedback_type[i.t],
+                        session[[i.s]]$contrast_left[i.t],
+                        session[[i.s]]$contrast_right[i.s],
+                        i.t)
+}
+
+colnames(trial.summary)=c(names(average_spike_area(i.t,this_session = session[[i.s]])), 'feedback', 'left contr.','right contr.','id' )
+
+# Turning it into a data frame
+trial.summary <- as_tibble(trial.summary)
+
+
+
+area.col=rainbow(n=n.area,alpha=0.7)
+# In base R, I usually initiate a blank plot before drawing anything on it
+plot(x=1,y=0, col='white',xlim=c(0,n.trial),ylim=c(0.5,3), xlab="Trials",ylab="Average spike counts", main=paste("Spikes per area in Session", i.s))
+
+
+for(i in 1:n.area){
+  lines(y=trial.summary[[i]],x=trial.summary$id,col=area.col[i],lty=2,lwd=1)
+  lines(smooth.spline(trial.summary$id, trial.summary[[i]]),col=area.col[i],lwd=3)
+  }
+legend("topright", 
+  legend = colnames(trial.summary)[1:n.area], 
+  col = area.col, 
+  lty = 1, 
+  cex = 0.8
+)
+```
+
+The above graph details spikes in brain activity as the trials go on. It details different brain areas such as ACA, CA3, DG and so on. We see as trials go on, spikes in brain activity tend to decrease. This is important to note because we can see how each trial may cause exhaustion in mice. It is also worth noting that there is a slight increase in brain activity in CA3 until about trial number 40, then there is a decrease.
+
+Now, let's look at the brain activity of session 17, the one with the highest success rate.
+
+
+```{r cache = TRUE}
+i.s= 17
+i.t = 1
+
+n.trial=length(session[[i.s]]$feedback_type)
+n.area=length(unique(session[[i.s]]$brain_area ))
+trial.summary =matrix(nrow=n.trial,ncol= n.area+1+2+1)
+
+area.col=rainbow(n=n.area,alpha=0.7)
+# In base R, I usually initiate a blank plot before drawing anything on it
+plot(x=1,y=0, col='white',xlim=c(0,n.trial),ylim=c(0.5,3), xlab="Trials",ylab="Average spike counts", main=paste("Spikes per area in Session", i.s))
+
+for(i.t in 1:n.trial){
+  trial.summary[i.t,]=c(average_spike_area(i.t,this_session = session[[i.s]]),
+                          session[[i.s]]$feedback_type[i.t],
+                        session[[i.s]]$contrast_left[i.t],
+                        session[[i.s]]$contrast_right[i.s],
+                        i.t)
+}
+
+colnames(trial.summary)=c(names(average_spike_area(i.t,this_session = session[[i.s]])), 'feedback', 'left contr.','right contr.','id' )
+
+# Turning it into a data frame
+trial.summary <- as_tibble(trial.summary)
+
+
+for(i in 1:n.area){
+  lines(y=trial.summary[[i]],x=trial.summary$id,col=area.col[i],lty=2,lwd=1)
+  lines(smooth.spline(trial.summary$id, trial.summary[[i]]),col=area.col[i],lwd=3)
+}
+
+legend("topright", 
+  legend = colnames(trial.summary)[1:n.area], 
+  col = area.col, 
+  lty = 1, 
+  cex = 0.8
+)
+```
+
+Similarly to the first graph, the new graph details average spike count for each trial number. Although similar, this new graph shows a lot more fluctuation in spikes. This is especially true for LD, RT, and VPL brain activity. I can also see that there is no clear decline in brain activity like there was for the first session. Thus, I cannot say that mice get tired as the trials go on.
+
+
+## Section 3 Data integration
+
+Let's now find the average spikes across each session.
+
+```{r cache = TRUE}
+avgSpks <- vector("list", length = 18)
+for (i in 1:18) {
+  spks.trial=session[[i]]$spks[[1]]
+  total.spikes=apply(spks.trial,1,sum)
+  avg.spikes=mean(total.spikes)
+  avgSpks[i] <- avg.spikes
+  firing.rate <- apply(spks.trial,2,mean)
+  plot(firing.rate, type = "l")
+}
+```
+
+
+
+```{r cache=TRUE}
+data_integration <- tibble(
+  Session_number = rep(0, 18),
+  Name = rep("Name", 18), 
+  Trial_number = rep(0, 18),
+  Left_contrast = rep(0, 18),
+  Right_contrast = rep(0, 18),
+  AverageSpks = rep(0,18),
+  SuccessRate = rep(0, 18)
+)
+data_integration[1] <- data_table[1]
+data_integration[2] <- data_table[2]
+data_integration[3] <- data_table[4]
+data_integration[4] <- proportionTable[3]
+data_integration[5] <- proportionTable[2]
+data_integration[6] <- t(as.data.frame(avgSpks))
+data_integration[7] <- data_table[6]
+
+colnames(data_integration) <- c("Session Number", "Mouse Name", "Trial Number", "Left Contrast", "Right Contrast", "Average Spikes", "Success Rate")
+kable(data_integration, format = "html", table.attr = "class='table table-striped'",digits=2) 
+```
+
+
+
+
+## Section 4 Predictive modeling
+
+```{r cache=TRUE}
+tableFunction <- function(sessionNumber) {
+  averageSpikes <- vector("list", length = length(session[[sessionNumber]]$spks))
+  
+  for (i in 1:length(session[[sessionNumber]]$spks)) {
+    spk.trial <- session[[sessionNumber]]$spks[[i]]
+    total.spike <- apply(spk.trial, 1, sum)
+    averageSpikes[[i]] <- mean(total.spike)
+  }
+  
+  sessionTable <- tibble(
+    Session_Number = rep(sessionNumber, times = length(session[[sessionNumber]]$spks)),
+    Mouse_Name = rep(session[[sessionNumber]]$mouse_name, times = length(session[[sessionNumber]]$spks)),
+    Trial_Number = 1:length(session[[sessionNumber]]$spks),
+    Left_Contrast = session[[sessionNumber]]$contrast_left,
+    Right_Contrast = session[[sessionNumber]]$contrast_right,
+    Average_Spikes = unlist(averageSpikes),
+    Feedback_Type = (session[[sessionNumber]]$feedback_type[1:length(session[[sessionNumber]]$contrast_left)] + 1) / 2
+  )
+  colnames(sessionTable) <- c("Session Number", "Mouse Name", "Trial Number", "Left Contrast", "Right Contrast", "Average Spikes", "Feedback Type")
+  return(sessionTable)
+}
+trainTestData <- function(dataFrame) {
+  test <- dataFrame
+  len <- dim(test)[1]
+  first20 <- as.integer(len*.2)
+  testData <- test[1:first20,]
+  trainData <- test[first20 + 1:len,]
+  return(list(testData = testData, trainData = trainData))
+}
+```
+
+```{r cache=TRUE}
+baseTest <- data_integration[1:4,]
+baseTrain <- data_integration[5:18,]
+
+
+base.log.model <- glm(`Success Rate` ~ `Left Contrast` + `Right Contrast` + `Average Spikes`,
+                      data = baseTrain, 
+                      family = "gaussian")
+base.log.prediction <- predict(base.log.model, newdata = baseTest, type = "response")
+
+base.prediction.label <- ifelse(base.log.prediction > 0.5, 1, 0)
+
+base.log.accuracy <- mean(base.prediction.label == baseTest$`Success Rate`)
+base.log.accuracy
+base.log.matrix <- table(baseTest$`Success Rate`, base.prediction.label)
+base.mis.cal <- 1 - sum(diag(base.log.matrix)) / sum(base.log.matrix)
+base.mis.cal
+```
+
+```{r cache=TRUE}
+kable(tableFunction(1), format = "html", table.attr = "class='table table-striped'", digits = 2)
+```
+
+
+
+
+```{r cache=TRUE}
+session1test <- trainTestData(tableFunction(1))$testData
+session1train <- trainTestData(tableFunction(1))$trainData
+session1.logistic.model <- glm(`Feedback Type` ~ `Left Contrast` + `Right Contrast` + `Average Spikes`,
+                      data = session1train, 
+                      family = "binomial")
+summary(session1.logistic.model)
+```
+
+
+```{r cache=TRUE}
+session1.log.prediction <- predict(session1.logistic.model, newdata = session1test, type = "response")
+session1.predictions <- ifelse(session1.log.prediction > 0.5, 1, 0)
+
+session1.log.matrix <- table(session1test$`Feedback Type`, session1.predictions)
+session1.log.matrix
+```
+
+```{r cache=TRUE}
+session1.mis.cal <- 1 - sum(diag(session1.log.matrix)) / sum(session1.log.matrix)
+session1.mis.cal
+```
+
+
+```{r cache=TRUE}
+session1.log.accuracy <- mean(session1.predictions == session1test$`Feedback Type`)
+session1.log.accuracy
+```
+
+```{r cache=TRUE}
+session1.2.logistic.model <- glm(`Feedback Type` ~ `Right Contrast` + `Average Spikes`,
+                      data = session1train, 
+                      family = "binomial")
+session1.2.log.prediction <- predict(session1.2.logistic.model, newdata = session1test, type = "response")
+
+session1.2.predictions <- ifelse(session1.2.log.prediction > 0.5, 1, 0)
+
+session1.2.log.accuracy <- mean(session1.2.predictions == session1test$`Feedback Type`)
+session1.2.log.accuracy
+session1.2.log.matrix <- table(session1test$`Feedback Type`, session1.2.predictions)
+
+```
+
+```{r cache=TRUE}
+session1.2.mis.cal <- 1 - sum(diag(session1.2.log.matrix)) / sum(session1.2.log.matrix)
+session1.2.mis.cal
+```
+
+
+```{r}
+averageProTable <- tibble(
+  Right <- mean(proportionTable.1$right),
+  Left <- mean(proportionTable.1$left),
+  Nothing <- mean(proportionTable.1$nothing)
+)
+barplot(as.matrix(averageProTable), beside = TRUE,
+        main = "Right Vs Left Vs Nothing (Dealing only with correct turns)",
+        xlab = "Session Number", ylab = "Proportions")
+```
+
+
+
+```{r cache=TRUE}
+set.seed(42)
+whole_df <- data.frame()
+for (i in 1:18){
+  temp_dataFrame <- tableFunction(i)
+  temp_dataFrame <- temp_dataFrame[sample(nrow(temp_dataFrame)), ]
+  whole_df <- rbind(whole_df, temp_dataFrame[1:10,])
+}
+whole_df <- whole_df[sample(nrow(whole_df)), ]
+wholeTestTrain <- trainTestData(whole_df)
+wholeTest <- wholeTestTrain$testData
+wholeTrain <- wholeTestTrain$trainData
+```
+
+Ideas I have. Take 10 trials from each session and combine it into 1 big data frame. Then split it up into its test and train case and build a prediction model that way
+
+```{r cache=TRUE}
+whole.log.model <- glm(`Feedback Type` ~ `Left Contrast` + `Right Contrast` + 
+                      `Average Spikes`,
+                      data = wholeTrain, 
+                      family = "binomial")
+whole.log.prediction <- predict(whole.log.model, newdata = wholeTest, type = "response")
+
+whole.prediction.label <- ifelse(whole.log.prediction > 0.5, 1, 0)
+
+whole.log.accuracy <- mean(whole.prediction.label == wholeTest$`Feedback Type`)
+whole.log.accuracy
+whole.log.matrix <- table(wholeTest$`Feedback Type`, whole.prediction.label)
+whole.mis.cal <- 1 - sum(diag(whole.log.matrix)) / sum(whole.log.matrix)
+whole.mis.cal
+summary(whole.log.model)
+```
+```
+
+
+## Section 5 Prediction performance on the test sets
+
+
+
+## Section 6 Discussion
+
+
+
+
+
+
+
+
+
+
+
+
+
