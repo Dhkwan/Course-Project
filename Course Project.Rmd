@@ -581,7 +581,7 @@ Let's use the test set to test our model.
 
 test <- list()
 for (i in 1:2) {
-  test[[i]] <- readRDS(paste('./test/test', i, '.rds', sep=''))
+  test[[i]] <- readRDS(paste('./Data/test/test', i, '.rds', sep=''))
 }
 
 tableFunctionTest <- function(sessionNumber) {
