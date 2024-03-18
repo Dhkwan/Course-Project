@@ -1,7 +1,7 @@
 ---
 title: "Course Project"
 author: "Damon Kwan"
-date: "2024-02-05"
+date: "2024-03-18"
 output: 
   html_document:
     toc: true
@@ -25,7 +25,7 @@ library(MASS)
 
 ## Abstract
 
-In this project, I will build a predictive model. I will first analyze the neural activity of multiple mice across different sessions and trials. I will analyze how different variables impact the feedback type across these sessions. In particular, I will test how the spikes and the stimuli of the neural activity affect the type of feedback and the overall success rate. Across the different sessions and trials, I will find patterns using plots. After finding such patterns, I will use this to build my predictive model. I will test out different types of combinations of data to see which will give me the best predictive model. I would use this model to predict a test set afterwards.
+In this project, I will build a predictive model. I will first analyze the neural activity of multiple mice across different sessions and trials. I will analyze how different variables impact the feedback type across these sessions. In particular, I will test how the spikes and the stimuli of the neural activity affect the type of feedback and the overall success rate. Across the different sessions and trials, I will find patterns using plots. After finding such patterns, I will use this to build my predictive model. I will test out different types of combinations of data to see which will give me the best predictive model. The types of predictive models I plan to use are logistic regression, linear discriminant analysis (LDA) and k nearest neighbors (kNN). I would use the best model to predict a test set afterwards.
 
 ## Section 1 Introduction
 
@@ -36,7 +36,6 @@ I will use a subset of data collected by Steinmetz et al. (2019) to build a pred
 Let's first create a table from each session detailing different types of variables used in the study.
 
 ```{r, cache=TRUE}
-session <- list()
 data_table <- tibble(
   Session_number = rep(0, 18),
   Name = rep("Name", 18), 
@@ -410,9 +409,7 @@ logModel <- function(train, test) {
   accuracy <- mean(log.prediction.label == test$`Feedback Type`)
   matrix <- table(test$`Feedback Type`, log.prediction.label)
   miscalculation <- 1 - sum(diag(matrix)) / sum(matrix)
-  ROC <- roc(test$`Feedback Type`, log.prediction)
-  AUC <- auc(ROC)
-  return(list(accuracy = accuracy, miscalculation = miscalculation, AUC = AUC))
+  return(list(model = log.model, accuracy = accuracy, miscalculation = miscalculation))
 }
 ldaModel <- function(train, test){
   lda.model <- lda(`Feedback Type` ~ `Left Contrast` + `Right Contrast` + 
@@ -422,9 +419,8 @@ ldaModel <- function(train, test){
   lda.matrix <- table(lda.prediction$class, test$`Feedback Type`)
   lda.misclassifcation.rate <- 1 - sum(diag(lda.matrix)) / sum(lda.matrix)
   lda.accuracy  <- mean(lda.prediction$class == test$`Feedback Type`)
-  ROC <- roc(test$`Feedback Type`, lda.prediction$posterior[, 2])
-  AUC <- auc(ROC)
-  return(list(misclassification = lda.misclassifcation.rate, accuracy = lda.accuracy,AUC = AUC))
+
+  return(list(model = lda.model, misclassification = lda.misclassifcation.rate, accuracy = lda.accuracy))
 }
 
 kNearest <- function(train, test, kn){
@@ -576,9 +572,68 @@ We can see that the accuracy and the misclassification rate for logistic regress
 
 With KNN, k = 5 is higher than k = 1. The k = 5 case shows a decently high accuracy rate and low misclassification rate. However, LDA and logistic regression show a better model.
 
-With the test set, I will use the LDA model from my mix of session 1 and session 2. I will use this as my predictive model since it has the highest accuracy rating and lowest misclassification rate.
+With the test set, I will use the LDA model from my mix of session 1 and session 17. I will use this as my predictive model since it has the highest accuracy rating and lowest misclassification rate.
 
 ## Section 5 Prediction performance on the test sets
+
+Let's use the test set to test our model.
+```{r cache=TRUE}
+
+test <- list()
+for (i in 1:2) {
+  test[[i]] <- readRDS(paste('./test/test', i, '.rds', sep=''))
+}
+
+tableFunctionTest <- function(sessionNumber) {
+  averageSpikes <- vector("list", length = length(test[[sessionNumber]]$spks))
+  
+  for (i in 1:length(test[[sessionNumber]]$spks)) {
+    spk.trial <- test[[sessionNumber]]$spks[[i]]
+    total.spike <- apply(spk.trial, 1, sum)
+    averageSpikes[[i]] <- mean(total.spike)
+  }
+  
+  sessionTable <- tibble(
+    Session_Number = rep(sessionNumber, times = length(test[[sessionNumber]]$spks)),
+    Mouse_Name = rep(test[[sessionNumber]]$mouse_name, times = length(test[[sessionNumber]]$spks)),
+    Trial_Number = 1:length(test[[sessionNumber]]$spks),
+    Left_Contrast = test[[sessionNumber]]$contrast_left,
+    Right_Contrast = test[[sessionNumber]]$contrast_right,
+    Average_Spikes = unlist(averageSpikes),
+    Feedback_Type = (test[[sessionNumber]]$feedback_type[1:length(test[[sessionNumber]]$contrast_left)] + 1) / 2
+  )
+  colnames(sessionTable) <- c("Session Number", "Mouse Name", "Trial Number", "Left Contrast", "Right Contrast", "Average Spikes", "Feedback Type")
+  return(sessionTable)
+}
+test1 <- tableFunctionTest(1)
+test2 <- tableFunctionTest(2)
+testSet <- rbind(test1,test2)
+kable(head(testSet), format = "html", table.attr = "class='table table-striped'",digits=2)
+```
+Above shows the head of the table of combined test sessions 1 and 2. I decided to create a table like I done for previous sessions in data integration. I then combined the two. I decided to use the entire test set since I wanted my model to test against as many data points as possible. That way, I will have a better idea of what the accuracy and misclassification rate are.
+
+
+Let's apply it my model. Recall that the model I chose was the LDA of session 1 and session 17.
+
+```{r cache=TRUE}
+model <- lda.session1.17$model
+test.prediction <- predict(model, newdata = testSet)
+lda.matrix <- table(test.prediction$class, testSet$`Feedback Type`)
+lda.misclassifcation.rate <- 1 - sum(diag(lda.matrix)) / sum(lda.matrix)
+lda.accuracy  <- mean(test.prediction$class == testSet$`Feedback Type`)
+
+
+conclusion.df <- data.frame()
+
+conclusion.df[1,1] <- lda.accuracy
+conclusion.df[1,2] <- lda.misclassifcation.rate
+colnames(conclusion.df) <- c("Accuracy","Misclassification Rate")
+kable(conclusion.df, format = "html", table.attr = "class='table table-striped'",digits=2)
+
+```
+
+The above table shows how well my chosen model did compared to the new test data. We can see that my accuracy rate is `r lda.accuracy`, which is quite high. This indicates that my model predicts around `r lda.accuracy * 100`% of the test data. My misclassifcation rate is `r lda.misclassifcation.rate`, which is quite low. This indicates that my model misclassifies around `r lda.misclassifcation.rate * 100`% of the test data
+
 
 ## Section 6 Discussion
 
@@ -587,3 +642,9 @@ To start with this research, I graphed many variables against the success rate. 
 For all my models, I took 80% of the data for the purpose of training, and used 20% of the data for the purpose of testing. I decided to do the average of all 18 sessions because I wanted a base line of how the predictive model would look. This was not a good idea since my predictive models were not accurate. This may be because my model did not have enough training data to make a proper prediction. I then decided to make a model comprised of the worst session and the best session. If my predictive model could predict the worse session and the best session, then it could predict anything in between. Lastly, I decided to use a model with 10 trials from all 18 sessions because I wanted a more varied data set.
 
 As for the type of models, I used logistic regression, linear discriminant analysis and k nearest neighbors. I found that my mixed model of the worst and best session gave me the best results, especially using the LDA model.
+
+I used my chosen model to predict the incoming new test set. I got a high accuracy rating and low misclassification rate, meaning that my model works well. Although the rates are not as good as 80% 20% split I used to train and test my model. This might be because the 80% 20% rates were only good from random chance. It is worth noting that my model may be slightly bias since I trained using session 1 and session 17 and tested using session 1 and session 18. However, my model still predicts well, so it is fine.
+
+In conclusion, I have found a good model to predict the feedback type of mice.
+
+
